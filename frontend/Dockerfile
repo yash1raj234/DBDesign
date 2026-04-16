@@ -18,6 +18,10 @@ FROM base AS builder
 COPY package*.json ./
 RUN npm ci
 
+# Accept at build time — Next.js bakes NEXT_PUBLIC_* into the JS bundle
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 COPY . .
 RUN npm run build
 

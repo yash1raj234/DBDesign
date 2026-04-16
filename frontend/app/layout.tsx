@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Space_Mono } from "next/font/google";
 import "./globals.css";
+import { SchemaProvider } from "@/components/SchemaProvider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -31,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${spaceMono.variable}`}>
       <body className="min-h-screen bg-cream text-brown antialiased">
-        {children}
+        <SchemaProvider>{children}</SchemaProvider>
       </body>
     </html>
   );

@@ -2,14 +2,11 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useState } from "react";
-import {
-  MOCK_SCHEMA,
-  MOCK_SQL,
-  MOCK_PRISMA,
-  MOCK_DBML,
-  MOCK_MIGRATION,
-} from "@/lib/mock-data";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useSchemaContext } from "@/components/SchemaProvider";
+import { refineSchema } from "@/lib/api";
+import { saveToHistory } from "@/lib/history";
 
 /* SSR-safe dynamic imports */
 const ERDCanvas = dynamic(() => import("@/components/canvas/ERDCanvas"), { ssr: false });
@@ -129,10 +126,112 @@ function ExportBtn({ label, accent, onClick }: { label: string; accent: string; 
 }
 
 /* ──────────────────────────────────────────────────────────
+   REFINE BAR
+────────────────────────────────────────────────────────── */
+function RefineBar({ onRefine, refining }: { onRefine: (prompt: string) => void; refining: boolean }) {
+  const [value,   setValue]   = useState("");
+  const [focused, setFocused] = useState(false);
+
+  function submit() {
+    const trimmed = value.trim();
+    if (!trimmed || refining) return;
+    onRefine(trimmed);
+    setValue("");
+  }
+
+  return (
+    <div style={{
+      flexShrink: 0,
+      padding: "10px 20px 10px",
+      borderTop: "1.5px solid rgba(62,44,35,0.10)",
+      background: "rgba(245,233,216,0.97)",
+      backdropFilter: "blur(10px)",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px",
+    }}>
+      <div style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        borderRadius: "10px",
+        border: `1.5px solid ${focused ? "#e76f2e" : "rgba(62,44,35,0.18)"}`,
+        boxShadow: focused ? "3px 3px 0 #e76f2e" : "3px 3px 0 rgba(62,44,35,0.10)",
+        background: "#f5e9d8",
+        transform: focused ? "translate(-1px,-1px)" : "translate(0,0)",
+        transition: "all 0.18s cubic-bezier(0.34,1.56,0.64,1)",
+        overflow: "hidden",
+      }}>
+        <span style={{ padding: "0 12px", fontSize: "14px", flexShrink: 0 }}>✦</span>
+        <input
+          type="text"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onKeyDown={e => { if (e.key === "Enter") submit(); }}
+          disabled={refining}
+          placeholder="Refine your schema… e.g. 'Add a notifications table' or 'Make email optional'"
+          style={{
+            flex: 1,
+            padding: "9px 8px 9px 0",
+            background: "transparent",
+            border: "none",
+            outline: "none",
+            fontFamily: "var(--font-inter, sans-serif)",
+            fontSize: "13px",
+            color: "#3e2c23",
+            opacity: refining ? 0.5 : 1,
+          }}
+        />
+      </div>
+
+      <button
+        onClick={submit}
+        disabled={!value.trim() || refining}
+        style={{
+          flexShrink: 0,
+          padding: "9px 18px",
+          borderRadius: "10px",
+          border: "2px solid rgba(62,44,35,0.2)",
+          background: (!value.trim() || refining) ? "rgba(231,111,46,0.4)" : "#e76f2e",
+          color: "#f5e9d8",
+          fontFamily: "var(--font-space-mono, monospace)",
+          fontWeight: 700, fontSize: "12px",
+          cursor: (!value.trim() || refining) ? "not-allowed" : "pointer",
+          display: "flex", alignItems: "center", gap: "7px",
+          transition: "all 0.15s",
+          whiteSpace: "nowrap" as const,
+        }}
+      >
+        {refining
+          ? <><span style={{ width: "12px", height: "12px", borderRadius: "50%", border: "2px solid rgba(245,233,216,0.3)", borderTopColor: "#f5e9d8", animation: "spin 0.8s linear infinite", display: "inline-block" }} />Refining…</>
+          : <>⚡ Refine</>
+        }
+      </button>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────
    OUTPUT PAGE
 ────────────────────────────────────────────────────────── */
-export default function OutputPage({ params }: { params: { id: string } }) {
-  const schema = MOCK_SCHEMA;
+export default function OutputPage({ params: _params }: { params: { id: string } }) {
+  const router = useRouter();
+  const { result, setResult } = useSchemaContext();
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  const [refining,      setRefining]      = useState(false);
+  const [refineError,   setRefineError]   = useState<string | null>(null);
+  const [exportingPng,  setExportingPng]  = useState(false);
+
+  useEffect(() => {
+    if (!result) router.replace("/generator");
+  }, [result, router]);
+
+  if (!result) return null;
+
+  const { schema, sql, prisma, dbml, migration } = result;
 
   function downloadFile(content: string, filename: string, mime = "text/plain") {
     const a = Object.assign(document.createElement("a"), {
@@ -141,6 +240,42 @@ export default function OutputPage({ params }: { params: { id: string } }) {
     });
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+
+  async function exportCanvasPng() {
+    if (!canvasRef.current || exportingPng) return;
+    setExportingPng(true);
+    try {
+      const { toPng } = await import("html-to-image");
+      const dataUrl = await toPng(canvasRef.current, {
+        backgroundColor: "#f5e9d8",
+        cacheBust: true,
+        pixelRatio: 2,
+      });
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `${schema.schema_name}-erd.png`;
+      a.click();
+    } catch (err) {
+      console.error("Canvas export failed:", err);
+    } finally {
+      setExportingPng(false);
+    }
+  }
+
+  async function handleRefine(refinePrompt: string) {
+    if (!result) return;
+    setRefining(true);
+    setRefineError(null);
+    try {
+      const res = await refineSchema({ schema: result.schema, follow_up: refinePrompt });
+      setResult(res);
+      saveToHistory(refinePrompt, res);
+    } catch (err) {
+      setRefineError(err instanceof Error ? err.message : "Refinement failed. Is the backend running?");
+    } finally {
+      setRefining(false);
+    }
   }
 
   return (
@@ -169,7 +304,6 @@ export default function OutputPage({ params }: { params: { id: string } }) {
 
           <div style={{ width: "1px", height: "20px", background: "rgba(62,44,35,0.12)", flexShrink: 0 }} />
 
-          {/* Schema info */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px", overflow: "hidden" }}>
             <span style={{
               fontFamily: "var(--font-space-mono, monospace)",
@@ -192,14 +326,28 @@ export default function OutputPage({ params }: { params: { id: string } }) {
               fontFamily: "var(--font-space-mono, monospace)",
               fontSize: "10px", fontWeight: 700, flexShrink: 0,
             }}>{schema.tables.length} tables</span>
+
+            {refining && (
+              <span style={{
+                padding: "3px 9px", borderRadius: "999px",
+                background: "rgba(47,164,215,0.10)", color: "#2fa4d7",
+                border: "1px solid rgba(47,164,215,0.20)",
+                fontFamily: "var(--font-space-mono, monospace)",
+                fontSize: "10px", fontWeight: 700, flexShrink: 0,
+                display: "flex", alignItems: "center", gap: "5px",
+              }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", border: "1.5px solid rgba(47,164,215,0.3)", borderTopColor: "#2fa4d7", animation: "spin 0.8s linear infinite", display: "inline-block" }} />
+                Refining…
+              </span>
+            )}
           </div>
         </div>
 
         {/* Right: Export */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-          <ExportBtn label="SQL"    accent="#2fa4d7" onClick={() => downloadFile(MOCK_SQL,       `${schema.schema_name}.sql`)} />
-          <ExportBtn label="Prisma" accent="#e76f2e" onClick={() => downloadFile(MOCK_PRISMA,    "schema.prisma")} />
-          <ExportBtn label="DBML"   accent="#3e2c23" onClick={() => downloadFile(MOCK_DBML,      `${schema.schema_name}.dbml`)} />
+          <ExportBtn label="SQL"    accent="#2fa4d7" onClick={() => downloadFile(sql,    `${schema.schema_name}.sql`)} />
+          <ExportBtn label="Prisma" accent="#e76f2e" onClick={() => downloadFile(prisma, "schema.prisma")} />
+          <ExportBtn label="DBML"   accent="#3e2c23" onClick={() => downloadFile(dbml,   `${schema.schema_name}.dbml`)} />
         </div>
       </header>
 
@@ -208,11 +356,11 @@ export default function OutputPage({ params }: { params: { id: string } }) {
 
         {/* LEFT — ERD Canvas (60%) */}
         <div style={{ flex: "3 1 0", minWidth: 0, minHeight: 0, padding: "16px", position: "relative" }}>
-          <div style={{ width: "100%", height: "100%", borderRadius: "16px", overflow: "hidden", border: "1.5px solid rgba(62,44,35,0.12)" }}>
+          <div ref={canvasRef} style={{ width: "100%", height: "100%", borderRadius: "16px", overflow: "hidden", border: "1.5px solid rgba(62,44,35,0.12)" }}>
             <ERDCanvas schema={schema} />
           </div>
 
-          {/* Hint badge */}
+          {/* Hint badge — bottom-left */}
           <div style={{
             position: "absolute", top: "28px", left: "28px",
             display: "flex", alignItems: "center", gap: "7px",
@@ -226,6 +374,28 @@ export default function OutputPage({ params }: { params: { id: string } }) {
             <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#2fa4d7", flexShrink: 0, animation: "pulseRing 2s ease infinite" }} />
             Interactive ERD · drag nodes to rearrange
           </div>
+
+          {/* Export PNG button — top-right */}
+          <button
+            onClick={exportCanvasPng}
+            disabled={exportingPng}
+            style={{
+              position: "absolute", top: "28px", right: "28px",
+              display: "flex", alignItems: "center", gap: "6px",
+              padding: "6px 12px", borderRadius: "999px",
+              background: "rgba(245,233,216,0.90)", backdropFilter: "blur(8px)",
+              border: "1px solid rgba(62,44,35,0.15)",
+              fontFamily: "var(--font-space-mono, monospace)",
+              fontSize: "10px", color: "rgba(62,44,35,0.55)",
+              cursor: exportingPng ? "wait" : "pointer",
+              boxShadow: "2px 2px 0 rgba(62,44,35,0.08)",
+              transition: "all 0.15s",
+            }}
+            onMouseEnter={e => { if (!exportingPng) { (e.currentTarget as HTMLButtonElement).style.background = "rgba(245,233,216,1)"; (e.currentTarget as HTMLButtonElement).style.color = "#3e2c23"; } }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(245,233,216,0.90)"; (e.currentTarget as HTMLButtonElement).style.color = "rgba(62,44,35,0.55)"; }}
+          >
+            {exportingPng ? "Exporting…" : "↓ Export PNG"}
+          </button>
         </div>
 
         {/* Divider */}
@@ -235,14 +405,31 @@ export default function OutputPage({ params }: { params: { id: string } }) {
         <div style={{ flex: "2 1 0", minWidth: 0, minHeight: 0, padding: "16px" }}>
           <div style={{ width: "100%", height: "100%" }}>
             <CodePanel
-              sql={MOCK_SQL}
-              prisma={MOCK_PRISMA}
-              dbml={MOCK_DBML}
-              migration={MOCK_MIGRATION}
+              sql={sql}
+              prisma={prisma}
+              dbml={dbml}
+              migration={migration ?? ""}
             />
           </div>
         </div>
       </div>
+
+      {/* ── Refine bar ── */}
+      <RefineBar onRefine={handleRefine} refining={refining} />
+
+      {refineError && (
+        <div style={{
+          flexShrink: 0,
+          padding: "6px 20px 8px",
+          background: "rgba(192,57,43,0.06)",
+          borderTop: "1px solid rgba(192,57,43,0.12)",
+          fontFamily: "var(--font-space-mono, monospace)",
+          fontSize: "11px", color: "#c0392b",
+          textAlign: "center" as const,
+        }}>
+          {refineError}
+        </div>
+      )}
 
       <FeedbackWidget />
     </div>

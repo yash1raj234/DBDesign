@@ -1,8 +1,10 @@
 "use client";
 
 import { memo } from "react";
-import { Handle, Position, NodeProps } from "@xyflow/react";
-import { TableNodeData } from "@/lib/types";
+import { Handle, Position, NodeProps, type Node } from "@xyflow/react";
+import { type Table } from "@/lib/types";
+
+type TableNodeType = Node<{ table: Table; isSelected?: boolean }, "tableNode">;
 
 /* Type → color mapping */
 const TYPE_COLORS: Record<string, string> = {
@@ -23,7 +25,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 const getColor = (t: string) => TYPE_COLORS[t] ?? "#3e2c23";
 
-function TableNode({ data, selected }: NodeProps<TableNodeData>) {
+function TableNode({ data, selected }: NodeProps<TableNodeType>) {
   const { table } = data;
   return (
     <div style={{

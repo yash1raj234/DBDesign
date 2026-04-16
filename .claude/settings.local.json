@@ -7,7 +7,10 @@
       "mcp__plugin_everything-claude-code_playwright__browser_navigate",
       "Bash(.venv/bin/pip install *)",
       "Bash(rustc --version)",
-      "Bash(cargo --version)"
+      "Bash(cargo --version)",
+      "Bash(npx tsc *)",
+      "Bash(find \"/Users/yash/Documents/90 DAYS CHALLANGE/Projects/DBDesgin_planner/backend\" -name \"gemini*\" -exec cat {} \\\\;)",
+      "Bash(find \"/Users/yash/Documents/90 DAYS CHALLANGE/Projects/DBDesgin_planner/backend/app\" -name \"config.py\" -exec cat {} \\\\;)"
     ]
   }
 }

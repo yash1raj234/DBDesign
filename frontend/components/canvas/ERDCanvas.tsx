@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback } from "react";
+import { useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -15,7 +15,7 @@ import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
 
 import TableNode from "./TableNode";
-import { ERDSchema, Table, TableNodeData } from "@/lib/types";
+import { ERDSchema, Table } from "@/lib/types";
 
 const NODE_W = 250;
 const NODE_H = 40 + 32 * 5; // header + avg 5 cols
@@ -38,7 +38,7 @@ export default function ERDCanvas({ schema }: { schema: ERDSchema }) {
   const { nodes, edges } = useMemo(() => {
     const rawNodes: Node[] = schema.tables.map((t: Table) => ({
       id: t.name, type: "tableNode", position: { x: 0, y: 0 },
-      data: { table: t } as TableNodeData,
+      data: { table: t } as Record<string, unknown>,
     }));
 
     const rawEdges: Edge[] = schema.relationships.map((r, i) => ({

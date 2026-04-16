@@ -3,6 +3,10 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Navbar from "@/components/shared/Navbar";
+import { generateSchema } from "@/lib/api";
+import { useSchemaContext } from "@/components/SchemaProvider";
+import { DBTarget } from "@/lib/types";
+import { saveToHistory, getHistory, type HistoryItem } from "@/lib/history";
 
 /* ──────────────────────────────────────────────────────────
    GHOST LOADER OVERLAY
@@ -209,10 +213,13 @@ const EXAMPLES = [
 function GeneratorInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
+  const { setResult } = useSchemaContext();
 
   const [prompt,   setPrompt]   = useState("");
   const [dbTarget, setDbTarget] = useState("postgresql");
   const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
+  const [history,  setHistory]  = useState<HistoryItem[]>([]);
 
   useEffect(() => {
     const tmpl = searchParams.get("template");
@@ -222,12 +229,23 @@ function GeneratorInner() {
       blog:      EXAMPLES[2],
     };
     if (tmpl && map[tmpl]) setPrompt(map[tmpl]);
+    setHistory(getHistory());
   }, [searchParams]);
 
-  function handleGenerate() {
+  async function handleGenerate() {
     if (!prompt.trim() || loading) return;
     setLoading(true);
-    setTimeout(() => router.push("/output/mock"), 3000);
+    setError(null);
+    try {
+      const res = await generateSchema({ prompt, db_target: dbTarget as DBTarget });
+      setResult(res);
+      saveToHistory(prompt, res);
+      setHistory(getHistory());
+      router.push("/output/latest");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Generation failed. Is the backend running?");
+      setLoading(false);
+    }
   }
 
   return (
@@ -336,10 +354,84 @@ function GeneratorInner() {
                 )}
               </button>
 
-              <p style={{ marginTop: "12px", textAlign: "center", fontSize: "11px", color: "rgba(62,44,35,0.35)", fontFamily: "var(--font-space-mono, monospace)" }}>
-                Mock mode — no AI calls in Phase 3
-              </p>
+              {error && (
+                <p style={{ marginTop: "12px", textAlign: "center", fontSize: "11px", color: "#c0392b", fontFamily: "var(--font-space-mono, monospace)" }}>
+                  {error}
+                </p>
+              )}
             </div>
+
+            {/* ── Recent Projects ── */}
+            {history.length > 0 && (
+              <div className="anim-fadeUp-d3" style={{ marginTop: "40px" }}>
+                <p className="label" style={{ marginBottom: "14px" }}>Recent Projects</p>
+                <div style={{ display: "flex", flexDirection: "column" as const, gap: "8px" }}>
+                  {history.map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setResult(item.result);
+                        router.push("/output/latest");
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "14px 18px",
+                        background: "#f5e9d8",
+                        border: "2px solid rgba(62,44,35,0.12)",
+                        borderRadius: "12px",
+                        boxShadow: "3px 3px 0 rgba(62,44,35,0.08)",
+                        cursor: "pointer",
+                        textAlign: "left" as const,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "14px",
+                        transition: "all 0.15s cubic-bezier(0.34,1.56,0.64,1)",
+                      }}
+                      onMouseEnter={e => {
+                        (e.currentTarget as HTMLButtonElement).style.transform = "translate(-1px,-1px)";
+                        (e.currentTarget as HTMLButtonElement).style.boxShadow = "5px 5px 0 rgba(62,44,35,0.14)";
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(62,44,35,0.25)";
+                      }}
+                      onMouseLeave={e => {
+                        (e.currentTarget as HTMLButtonElement).style.transform = "";
+                        (e.currentTarget as HTMLButtonElement).style.boxShadow = "3px 3px 0 rgba(62,44,35,0.08)";
+                        (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(62,44,35,0.12)";
+                      }}
+                    >
+                      <span style={{ fontSize: "20px", flexShrink: 0 }}>🗄️</span>
+                      <div style={{ flex: 1, overflow: "hidden" }}>
+                        <p style={{
+                          fontFamily: "var(--font-space-mono, monospace)",
+                          fontWeight: 700, fontSize: "12px", color: "#3e2c23",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+                          marginBottom: "3px",
+                        }}>
+                          {item.result.schema.title ?? item.result.schema.schema_name}
+                        </p>
+                        <p style={{
+                          fontSize: "11px", color: "rgba(62,44,35,0.5)",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+                        }}>
+                          {item.prompt.length > 60 ? item.prompt.slice(0, 60) + "…" : item.prompt}
+                        </p>
+                      </div>
+                      <div style={{ flexShrink: 0, textAlign: "right" as const }}>
+                        <p style={{
+                          fontFamily: "var(--font-space-mono, monospace)",
+                          fontSize: "9px", color: "rgba(62,44,35,0.35)",
+                          marginBottom: "3px",
+                        }}>
+                          {item.result.schema.tables.length} tables
+                        </p>
+                        <p style={{ fontSize: "9px", color: "rgba(62,44,35,0.3)", fontFamily: "var(--font-space-mono, monospace)" }}>
+                          {new Date(item.timestamp).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
           </div>
         </main>
