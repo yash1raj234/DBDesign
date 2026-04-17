@@ -29,18 +29,18 @@ class Settings(BaseSettings):
     # ── API ───────────────────────────────────────────────────────────────────
     debug: bool = False
     secret_key: str
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: str = "http://localhost:3000"
 
     # ── Cache ─────────────────────────────────────────────────────────────────
     prompt_cache_ttl_seconds: int = 3600  # 1 hour
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def split_cors_string(cls, v: str | list[str]) -> list[str]:
-        """Accept comma-separated string from env or a proper list."""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+    @property
+    def parsed_cors_origins(self) -> list[str]:
+        v = self.cors_origins.strip()
+        if v.startswith("["):
+            import json
+            return json.loads(v)
+        return [o.strip() for o in v.split(",") if o.strip()]
 
 
 # Single shared instance imported everywhere:  from app.core.config import settings
