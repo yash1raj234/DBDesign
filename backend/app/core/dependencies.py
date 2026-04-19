@@ -10,7 +10,7 @@ import redis.asyncio as aioredis
 from fastapi import Request
 
 from app.core.config import settings
-from app.services.gemini import GeminiService
+from app.services.groq_service import GroqService
 
 
 # ── Redis ─────────────────────────────────────────────────────────────────────
@@ -42,13 +42,13 @@ async def get_redis(request: Request) -> AsyncGenerator[aioredis.Redis, None]:
         await client.aclose()
 
 
-# ── GeminiService ─────────────────────────────────────────────────────────────
+# ── LLM Service ───────────────────────────────────────────────────────────────
 
 
-async def get_gemini_service(request: Request) -> GeminiService:
+async def get_llm_service(request: Request) -> GroqService:
     """
-    Returns the GeminiService singleton stored on app.state.
+    Returns the GroqService singleton stored on app.state.
     The service holds the model handle; creating it once avoids repeated
     SDK initialisation overhead.
     """
-    return request.app.state.gemini_service
+    return request.app.state.llm_service

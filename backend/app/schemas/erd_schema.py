@@ -2,7 +2,7 @@
 ERD Data Contract — single source of truth for the DBDesign Platform.
 
 This module defines every Pydantic model that:
-  1. Validates the structured JSON output produced by Gemini 1.5 Flash.
+  1. Validates the structured JSON output produced by Groq Llama 3.
   2. Drives all code-generation functions (SQL, Prisma, DBML, migrations).
   3. Is serialised and sent to the React Flow canvas for ERD rendering.
 
@@ -12,7 +12,7 @@ Design principles
 - Validators run at both field and model level; errors surface immediately
   instead of propagating into generators.
 - `generated_at` and `prompt_hash` are set by the backend layer and are
-  excluded from the AI-facing schema (Gemini never sets them).
+  excluded from the AI-facing schema (LLM never sets them).
 - Relationships are explicit (not derived on the fly) because the AI needs
   to express cardinality that is not always recoverable from FK topology
   alone (e.g. a self-referential hierarchy, a logical M:N on junction tables).
@@ -521,7 +521,7 @@ class ERDSchema(BaseModel):
 
     This is THE canonical object that flows through the entire system:
 
-        Gemini 1.5 Flash (JSON output)
+        Groq Llama 3 (JSON output)
             → Pydantic validation (this model)
                 → SQL / Prisma / DBML / Migration generators
                     → React Flow canvas (serialised to JSON)
@@ -709,38 +709,38 @@ class ERDSchema(BaseModel):
 
 
 # ============================================================================
-# GeminiRetryContext  — Phase 2 automated self-healing loop
+# LLMRetryContext  — Phase 2 automated self-healing loop
 # ============================================================================
 
 # PHASE 2 IMPLEMENTATION NOTE ─────────────────────────────────────────────────
 #
-# The FastAPI /generate endpoint MUST wrap ERDSchema(**gemini_json) in a
+# The FastAPI /generate endpoint MUST wrap ERDSchema(**llm_json) in a
 # try/except block as follows:
 #
 #   MAX_RETRIES = 2
 #   for attempt in range(MAX_RETRIES + 1):
 #       try:
-#           schema = ERDSchema(**gemini_output)
+#           schema = ERDSchema(**llm_output)
 #           break                            # validation passed → exit loop
 #       except ValidationError as exc:
 #           if attempt == MAX_RETRIES:
 #               raise HTTPException(422, detail=str(exc))
-#           retry_ctx = GeminiRetryContext.from_validation_error(
-#               original_prompt, gemini_output, exc
+#           retry_ctx = LLMRetryContext.from_validation_error(
+#               original_prompt, llm_output, exc
 #           )
-#           gemini_output = call_gemini(retry_ctx.to_repair_prompt())
+#           llm_output = call_llm(retry_ctx.to_repair_prompt())
 #
 # This converts a hard 422 into a silent self-correction for single-typo
-# mistakes (e.g. Gemini writes "ordr" instead of "order" in a FK reference).
-# The structured error message tells Gemini exactly which field failed and why,
+# mistakes (e.g. LLM writes "ordr" instead of "order" in a FK reference).
+# The structured error message tells the LLM exactly which field failed and why,
 # so the repair prompt is precise rather than asking it to "try again".
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class GeminiRetryContext(BaseModel):
+class LLMRetryContext(BaseModel):
     """
     Structured payload used by the Phase 2 /generate endpoint to feed a
-    Pydantic ValidationError back to Gemini for automated self-correction.
+    Pydantic ValidationError back to the LLM for automated self-correction.
 
     Usage
     -----
@@ -750,12 +750,12 @@ class GeminiRetryContext(BaseModel):
 
     original_prompt: str = Field(..., description="The user's original plain-English input.")
     failed_output: Dict[str, Any] = Field(
-        ..., description="The raw JSON dict that Gemini produced and that failed validation."
+        ..., description="The raw JSON dict that the LLM produced and that failed validation."
     )
     error_summary: str = Field(
         ...,
         description=(
-            "Human-readable, Gemini-facing description of every validation error. "
+            "Human-readable, LLM-facing description of every validation error. "
             "Formatted as a bullet list so the model can locate each problem quickly."
         ),
     )
@@ -768,7 +768,7 @@ class GeminiRetryContext(BaseModel):
         failed_output: Dict[str, Any],
         exc: Exception,
         attempt: int = 1,
-    ) -> GeminiRetryContext:
+    ) -> LLMRetryContext:
         """Build a retry context from a caught Pydantic ValidationError."""
         try:
             # Pydantic v2 ValidationError exposes .errors()
@@ -795,7 +795,7 @@ class GeminiRetryContext(BaseModel):
 
     def to_repair_prompt(self) -> str:
         """
-        Returns the full prompt string to send to Gemini on the retry call.
+        Returns the full prompt string to send to the LLM on the retry call.
         The error summary is prepended so it appears in the model's primary
         attention window.
         """

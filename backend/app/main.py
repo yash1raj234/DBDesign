@@ -3,7 +3,7 @@ FastAPI application factory.
 
 Startup / shutdown lifecycle:
   - Creates the Redis connection pool and stores it on app.state.
-  - Creates the GeminiService singleton (with the Redis pool) on app.state.
+  - Creates the GroqService singleton (with the Redis pool) on app.state.
   - Cleans up on shutdown.
 """
 
@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.dependencies import get_redis_pool
 from app.routers.generate import router as generate_router
-from app.services.gemini import GeminiService
+from app.services.groq_service import GroqService
 
 
 @asynccontextmanager
@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.redis_pool = pool
 
     redis_client: aioredis.Redis = aioredis.Redis(connection_pool=pool)
-    app.state.gemini_service = GeminiService(redis_client=redis_client)
+    app.state.llm_service = GroqService(redis_client=redis_client)
 
     yield
 

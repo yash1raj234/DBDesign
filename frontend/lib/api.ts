@@ -1,6 +1,6 @@
 import type { ERDSchema, GenerateRequest, GenerateResponse, RefineRequest } from "@/lib/types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 export async function generateSchema(req: GenerateRequest): Promise<GenerateResponse> {
   const res = await fetch(`${BASE_URL}/api/v1/generate`, {

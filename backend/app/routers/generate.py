@@ -13,7 +13,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.core.dependencies import get_gemini_service
+from app.core.dependencies import get_llm_service
 from app.generators.dbml import generate_dbml
 from app.generators.migration import generate_migration
 from app.generators.prisma import generate_prisma
@@ -24,7 +24,7 @@ from app.schemas.api import (
     RefineRequest,
     SavedSchemaResponse,
 )
-from app.services.gemini import GeminiService
+from app.services.groq_service import GroqService
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +53,12 @@ def _run_generators(schema):
 )
 async def generate(
     body: GenerateRequest,
-    gemini: Annotated[GeminiService, Depends(get_gemini_service)],
+    llm: Annotated[GroqService, Depends(get_llm_service)],
 ) -> GenerateResponse:
     try:
-        schema, cached = await gemini.generate(body.prompt, body.db_target)
+        schema, cached = await llm.generate(body.prompt, body.db_target)
     except ValueError as exc:
-        logger.error("Gemini generation failed: %s", exc)
+        logger.error("Groq generation failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
@@ -83,12 +83,12 @@ async def generate(
 )
 async def refine(
     body: RefineRequest,
-    gemini: Annotated[GeminiService, Depends(get_gemini_service)],
+    llm: Annotated[GroqService, Depends(get_llm_service)],
 ) -> GenerateResponse:
     try:
-        schema = await gemini.refine(body.schema, body.follow_up)
+        schema = await llm.refine(body.schema, body.follow_up)
     except ValueError as exc:
-        logger.error("Gemini refinement failed: %s", exc)
+        logger.error("Groq refinement failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),

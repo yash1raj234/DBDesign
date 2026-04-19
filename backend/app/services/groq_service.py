@@ -1,14 +1,14 @@
 """
-GeminiService — text → validated ERDSchema via Gemini 1.5 Flash.
+GroqService — text → validated ERDSchema via Groq LLaMA3.
 
 Flow
 ----
 1. Hash prompt + db_target → Redis cache key.
 2. Cache hit  → deserialise and return immediately.
-3. Cache miss → call Gemini with a structured system prompt.
+3. Cache miss → call Groq with a structured system prompt.
 4. Parse JSON response → validate with ERDSchema (Pydantic).
-5. ValidationError → build GeminiRetryContext → retry up to
-   settings.gemini_max_retries times with the error fed back to Gemini.
+5. ValidationError → build LLMRetryContext → retry up to
+   settings.llm_max_retries times with the error fed back to Groq.
 6. On success → stamp metadata, cache, return schema.
 """
 
@@ -20,11 +20,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-import google.generativeai as genai
+from groq import AsyncGroq
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.schemas.erd_schema import DBTarget, ERDSchema, GeminiRetryContext
+from app.schemas.erd_schema import DBTarget, ERDSchema, LLMRetryContext
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ You are an expert database architect. Convert the user's plain-English descripti
 into a valid JSON object representing a relational database schema.
 
 ━━━ MANDATORY RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1.  Every table MUST have at least one column with  "is_primary_key": true.
+1.  Every table MUST have at least one column with "is_primary_key": true.
 2.  Primary key columns MUST have "is_nullable": false.
 3.  Use snake_case for ALL table and column names (e.g. order_item, user_id).
 4.  "columns" inside "foreign_keys[].columns" MUST exactly match column names
@@ -167,12 +167,12 @@ def _cache_key(prompt_hash: str) -> str:
     return f"schema:{prompt_hash}"
 
 
-# ── GeminiService ─────────────────────────────────────────────────────────────
+# ── GroqService ─────────────────────────────────────────────────────────────
 
 
-class GeminiService:
+class GroqService:
     """
-    Stateless service.  Instantiate once at application startup and reuse.
+    Stateless service. Instantiate once at application startup and reuse.
 
     Parameters
     ----------
@@ -181,15 +181,8 @@ class GeminiService:
     """
 
     def __init__(self, redis_client: Any | None = None) -> None:
-        genai.configure(api_key=settings.gemini_api_key)
-        self._model = genai.GenerativeModel(
-            model_name=settings.gemini_model,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0.2,        # low temperature → more deterministic structure
-                max_output_tokens=8192,
-            ),
-        )
+        self.groq = AsyncGroq(api_key=settings.groq_api_key)
+        self.model = settings.groq_model
         self._redis = redis_client
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -203,7 +196,7 @@ class GeminiService:
         Raises
         ------
         ValueError
-            If Gemini fails to produce a valid schema after all retries.
+            If Groq fails to produce a valid schema after all retries.
         """
         ph = _prompt_hash(prompt, db_target)
 
@@ -215,38 +208,53 @@ class GeminiService:
                 schema = ERDSchema.model_validate_json(cached)
                 return schema, True
 
-        # ── 2. Gemini call + validation with retry ────────────────────────────
+        # ── 2. Groq call + validation with retry ────────────────────────────
         system = _system_prompt(db_target)
-        send_prompt = f"{system}\n\nUser request: {prompt}"
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt}
+        ]
         raw_json: dict[str, Any] = {}
 
-        for attempt in range(settings.gemini_max_retries + 1):
-            response = await self._model.generate_content_async(send_prompt)
-            raw_json = json.loads(response.text)
+        for attempt in range(settings.llm_max_retries + 1):
+            response = await self.groq.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+                max_tokens=8192,
+            )
+            raw_text = response.choices[0].message.content
+            try:
+                raw_json = json.loads(raw_text)
+            except Exception as exc:
+                raw_json = {}
+                
             raw_json.setdefault("db_target", db_target.value)
 
             try:
                 schema = ERDSchema.model_validate(raw_json)
                 break
             except ValidationError as exc:
-                if attempt == settings.gemini_max_retries:
+                if attempt == settings.llm_max_retries:
                     raise ValueError(
-                        f"Gemini produced an invalid schema after "
-                        f"{settings.gemini_max_retries + 1} attempts.\n"
+                        f"Groq produced an invalid schema after "
+                        f"{settings.llm_max_retries + 1} attempts.\n"
                         f"Last error: {exc}"
                     ) from exc
                 logger.warning(
-                    "Gemini validation failed (attempt %d/%d), retrying: %s",
-                    attempt + 1, settings.gemini_max_retries, str(exc)[:200],
+                    "Groq validation failed (attempt %d/%d), retrying: %s",
+                    attempt + 1, settings.llm_max_retries, str(exc)[:200],
                 )
-                # Build a repair prompt; send_prompt is consumed at the top
-                # of the next iteration.
-                send_prompt = GeminiRetryContext.from_validation_error(
+                # Build a repair prompt
+                repair_prompt = LLMRetryContext.from_validation_error(
                     original_prompt=prompt,
                     failed_output=raw_json,
                     exc=exc,
                     attempt=attempt + 1,
                 ).to_repair_prompt()
+                messages.append({"role": "assistant", "content": raw_text})
+                messages.append({"role": "user", "content": repair_prompt})
 
         # ── 3. Stamp metadata ─────────────────────────────────────────────────
         schema.generated_at = datetime.now(tz=timezone.utc)
@@ -274,18 +282,33 @@ class GeminiService:
 
         current_json = existing.model_dump_json(indent=2)
         refine_prompt = (
-            f"{system}\n\n"
             f"You have an existing database schema (JSON below). "
             f"Apply ONLY the changes described in the follow-up instruction. "
-            f"Return the complete updated schema JSON.\n\n"
+            f"Return ONLY the complete updated schema JSON.\n\n"
             f"Follow-up instruction: {follow_up}\n\n"
             f"Existing schema:\n{current_json}"
         )
+        
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": refine_prompt}
+        ]
 
         raw_json: dict[str, Any] = {}
-        for attempt in range(settings.gemini_max_retries + 1):
-            response = await self._model.generate_content_async(refine_prompt)
-            raw_json = json.loads(response.text)
+        for attempt in range(settings.llm_max_retries + 1):
+            response = await self.groq.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+                max_tokens=8192,
+            )
+            raw_text = response.choices[0].message.content
+            try:
+                raw_json = json.loads(raw_text)
+            except Exception as exc:
+                raw_json = {}
+                
             raw_json.setdefault("db_target", db_target.value)
 
             try:
@@ -293,18 +316,20 @@ class GeminiService:
                 schema.generated_at = datetime.now(tz=timezone.utc)
                 return schema
             except ValidationError as exc:
-                if attempt == settings.gemini_max_retries:
+                if attempt == settings.llm_max_retries:
                     raise ValueError(
-                        f"Gemini produced an invalid schema after "
-                        f"{settings.gemini_max_retries + 1} refinement attempts.\n"
+                        f"Groq produced an invalid schema after "
+                        f"{settings.llm_max_retries + 1} refinement attempts.\n"
                         f"Last error: {exc}"
                     ) from exc
-                # Mutate refine_prompt in place; consumed at top of next iteration.
-                refine_prompt = GeminiRetryContext.from_validation_error(
+                
+                repair_prompt = LLMRetryContext.from_validation_error(
                     original_prompt=follow_up,
                     failed_output=raw_json,
                     exc=exc,
                     attempt=attempt + 1,
                 ).to_repair_prompt()
+                messages.append({"role": "assistant", "content": raw_text})
+                messages.append({"role": "user", "content": repair_prompt})
 
         raise RuntimeError("Unreachable")  # loop always breaks or raises above

@@ -21,10 +21,10 @@ class Settings(BaseSettings):
     # ── Redis ─────────────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379/0"
 
-    # ── Gemini ────────────────────────────────────────────────────────────────
-    gemini_api_key: str
-    gemini_model: str = "gemini-1.5-flash"
-    gemini_max_retries: int = 2          # self-healing retry budget (Phase 2)
+    # ── Groq ──────────────────────────────────────────────────────────────────
+    groq_api_key: str
+    groq_model: str = "llama3-70b-8192"
+    llm_max_retries: int = 2          # self-healing retry budget (Phase 2)
 
     # ── API ───────────────────────────────────────────────────────────────────
     debug: bool = False
