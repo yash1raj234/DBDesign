@@ -1,6 +1,6 @@
 import type { ERDSchema, GenerateRequest, GenerateResponse, RefineRequest } from "@/lib/types";
 
-const BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const BASE_URL = ""; // use relative path to trigger Next.js proxy rewrite
 
 export async function generateSchema(req: GenerateRequest): Promise<GenerateResponse> {
   const res = await fetch(`${BASE_URL}/api/v1/generate`, {
