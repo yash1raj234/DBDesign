@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # ── Groq ──────────────────────────────────────────────────────────────────
     groq_api_key: str
-    groq_model: str = "llama3-70b-8192"
+    groq_model: str = "llama-3.3-70b-versatile"
     llm_max_retries: int = 2          # self-healing retry budget (Phase 2)
 
     # ── API ───────────────────────────────────────────────────────────────────
